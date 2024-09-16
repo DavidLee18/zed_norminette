@@ -5,3 +5,7 @@ schema_version = 1
 authors = ["David Lee <djwodus@gmail.com>"]
 description = "Norminette for 42 School"
 repository = "https://github.com/DavidLee18/zed_norminette"
+
+[language_servers.c-norminette]
+name = "Norminette LSP"
+language = "C"
