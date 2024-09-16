@@ -10,6 +10,25 @@ struct NorminetteExtension {
     cache: Option<String>,
 }
 
+impl NorminetteExtension {
+    pub fn asset_name(&self) -> String {
+        let (platform, arch) = zed::current_platform();
+        format!(
+            "norminette_lsp-{arch}-{os}",
+            arch = match arch {
+                zed::Architecture::Aarch64 => "aarch64",
+                zed::Architecture::X86 => "x86",
+                zed::Architecture::X8664 => "x86_64",
+            },
+            os = match platform {
+                zed::Os::Mac => "apple-darwin",
+                zed::Os::Linux => "unknown-linux-gnu",
+                zed::Os::Windows => "windows",
+            }
+        )
+    }
+}
+
 impl zed::Extension for NorminetteExtension {
     fn new() -> Self
     where
@@ -23,7 +42,7 @@ impl zed::Extension for NorminetteExtension {
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        match worktree.which("norminette_zed") {
+        match worktree.which(&self.asset_name()) {
             Some(path) => Ok(zed::Command {
                 command: path,
                 args: vec![],
@@ -51,20 +70,7 @@ impl zed::Extension for NorminetteExtension {
                         },
                     )?;
 
-                    let (platform, arch) = zed::current_platform();
-                    let asset_name = format!(
-                        "norminette_lsp_{os}_{arch}",
-                        arch = match arch {
-                            zed::Architecture::Aarch64 => "arm64",
-                            zed::Architecture::X86 => "x86",
-                            zed::Architecture::X8664 => "x64",
-                        },
-                        os = match platform {
-                            zed::Os::Mac => "darwin",
-                            zed::Os::Linux => "linux",
-                            zed::Os::Windows => "windows",
-                        }
-                    );
+                    let asset_name = self.asset_name();
 
                     let asset = release
                         .assets
@@ -73,7 +79,7 @@ impl zed::Extension for NorminetteExtension {
                         .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
                     let version_dir = format!("norminette_lsp_{}", release.version);
-                    let binary_path = format!("{}/norminette_lsp", version_dir);
+                    let binary_path = format!("{}/{}", version_dir, asset_name);
 
                     if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
                         zed::set_language_server_installation_status(
