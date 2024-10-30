@@ -3,11 +3,12 @@ use std::fs;
 use zed_extension_api::{
     self as zed,
     lsp::{Completion, Symbol},
-    GithubReleaseOptions, LanguageServerInstallationStatus,
+    GithubReleaseOptions, LanguageServerId, LanguageServerInstallationStatus,
 };
 
 struct NorminetteExtension {
     cache: Option<String>,
+    version: Option<String>,
 }
 
 impl NorminetteExtension {
@@ -27,6 +28,115 @@ impl NorminetteExtension {
             }
         )
     }
+
+    pub fn cache_new(
+        &mut self,
+        release: zed::GithubRelease,
+        language_server_id: &LanguageServerId,
+    ) -> zed::Result<zed::Command> {
+        let asset_name = self.asset_name();
+
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| format!("no asset found matching {:?}", asset_name))
+            .map_err(|e| {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &LanguageServerInstallationStatus::Failed(e.clone()),
+                );
+                e
+            })?;
+
+        let version_dir = String::from("norminette_lsp");
+        // let binary_path = format!("{}/{}", version_dir, asset_name);
+
+        if !fs::metadata(&version_dir).map_or(false, |stat| stat.is_file()) {
+            zed::set_language_server_installation_status(
+                &language_server_id,
+                &zed::LanguageServerInstallationStatus::Downloading,
+            );
+
+            match fs::metadata(&version_dir).map(|stat| stat.is_file()) {
+                Ok(true) => {
+                    fs::remove_file(&version_dir).map_err(|err| {
+                        let s = format!("failed to remove file {}: {:?}", version_dir, err);
+                        zed::set_language_server_installation_status(
+                            language_server_id,
+                            &LanguageServerInstallationStatus::Failed(s.clone()),
+                        );
+                        s
+                    })?;
+                    // fs::create_dir(&version_dir).map_err(|err| {
+                    //     format!("create dir at {} failed: {:?}", version_dir, err)
+                    // })?;
+                }
+                Ok(false) => (),
+                Err(_) => (), /* fs::create_dir(&version_dir).map_err(|err| {
+                                  format!("create dir at {} failed: {:?}", version_dir, err)
+                              })? */
+            };
+
+            zed::download_file(
+                &asset.download_url,
+                &version_dir,
+                zed::DownloadedFileType::Uncompressed,
+            )
+            .map_err(|e| {
+                let s = format!("failed to download file: {e}");
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &LanguageServerInstallationStatus::Failed(s.clone()),
+                );
+                s
+            })?;
+
+            zed::make_file_executable(&version_dir).map_err(|e| {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &LanguageServerInstallationStatus::Failed(e.clone()),
+                );
+                e
+            })?;
+
+            let entries = fs::read_dir(".").map_err(|e| {
+                let s = format!("failed to list working directory {e}");
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &LanguageServerInstallationStatus::Failed(s.clone()),
+                );
+                s
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|e| {
+                    let s = format!("failed to load directory entry {e}");
+                    zed::set_language_server_installation_status(
+                        language_server_id,
+                        &LanguageServerInstallationStatus::Failed(s.clone()),
+                    );
+                    s
+                })?;
+                if entry.file_name().to_str() != Some(&version_dir) {
+                    fs::remove_dir_all(&entry.path()).map_err(|e| {
+                        zed::set_language_server_installation_status(
+                            language_server_id,
+                            &LanguageServerInstallationStatus::Failed(e.to_string()),
+                        );
+                        e.to_string()
+                    })?;
+                }
+            }
+        }
+
+        self.cache = Some(version_dir.clone());
+        zed::set_language_server_installation_status(language_server_id, &zed::LanguageServerInstallationStatus::None);
+        Ok(zed::Command {
+            command: version_dir,
+            args: vec![],
+            env: vec![],
+        })
+    }
 }
 
 impl zed::Extension for NorminetteExtension {
@@ -34,7 +144,10 @@ impl zed::Extension for NorminetteExtension {
     where
         Self: Sized,
     {
-        Self { cache: None }
+        Self {
+            cache: None,
+            version: None,
+        }
     }
 
     fn language_server_command(
@@ -42,121 +155,44 @@ impl zed::Extension for NorminetteExtension {
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        match worktree.which("norminette_lsp") {
-            Some(path) => Ok(zed::Command {
-                command: path,
-                args: vec![],
-                env: vec![],
-            }),
-            None => match &self.cache {
-                Some(path) if fs::metadata(path).map_or(false, |stat| stat.is_file()) => {
-                    Ok(zed::Command {
-                        command: path.clone(),
-                        args: vec![],
-                        env: vec![],
-                    })
-                }
-                _ => {
-                    zed::set_language_server_installation_status(
-                        language_server_id,
-                        &LanguageServerInstallationStatus::CheckingForUpdate,
-                    );
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &LanguageServerInstallationStatus::CheckingForUpdate,
+        );
 
-                    let release = zed::latest_github_release(
-                        "DavidLee18/norminette_lsp",
-                        GithubReleaseOptions {
-                            require_assets: true,
-                            pre_release: false,
-                        },
-                    ).map_err(|e| {
-                        zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(e.clone()));
-                        e
-                    })?;
-
-                    let asset_name = self.asset_name();
-
-                    let asset = release
-                        .assets
-                        .iter()
-                        .find(|asset| asset.name == asset_name)
-                        .ok_or_else(|| format!("no asset found matching {:?}", asset_name))
-                        .map_err(|e| {
-                            zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(e.clone()));
-                            e
-                        })?;
-
-                    let version_dir = String::from("norminette_lsp");
-                    // let binary_path = format!("{}/{}", version_dir, asset_name);
-
-                    if !fs::metadata(&version_dir).map_or(false, |stat| stat.is_file()) {
-                        zed::set_language_server_installation_status(
-                            &language_server_id,
-                            &zed::LanguageServerInstallationStatus::Downloading,
-                        );
-
-                        match fs::metadata(&version_dir).map(|stat| stat.is_file()) {
-                            Ok(true) => {
-                                fs::remove_file(&version_dir).map_err(|err| {
-                                    let s = format!("failed to remove file {}: {:?}", version_dir, err);
-                                    zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(s.clone()));
-                                    s
-                                })?;
-                                // fs::create_dir(&version_dir).map_err(|err| {
-                                //     format!("create dir at {} failed: {:?}", version_dir, err)
-                                // })?;
-                            }
-                            Ok(false) => (),
-                            Err(_) => (), /* fs::create_dir(&version_dir).map_err(|err| {
-                                              format!("create dir at {} failed: {:?}", version_dir, err)
-                                          })? */
-                        };
-
-                        zed::download_file(
-                            &asset.download_url,
-                            &version_dir,
-                            zed::DownloadedFileType::Uncompressed,
-                        )
-                        .map_err(|e| {
-                            let s = format!("failed to download file: {e}");
-                            zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(s.clone()));
-                            s
-                        })?;
-
-                        zed::make_file_executable(&version_dir).map_err(|e| {
-                            zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(e.clone()));
-                            e
-                        })?;
-
-                        let entries = fs::read_dir(".")
-                            .map_err(|e| {
-                                let s = format!("failed to list working directory {e}");
-                                zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(s.clone()));
-                                s
-                            })?;
-                        for entry in entries {
-                            let entry =
-                                entry.map_err(|e| {
-                                    let s = format!("failed to load directory entry {e}");
-                                    zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(s.clone()));
-                                    s
-                                })?;
-                            if entry.file_name().to_str() != Some(&version_dir) {
-                                fs::remove_dir_all(&entry.path()).map_err(|e| {
-                                    zed::set_language_server_installation_status(language_server_id, &LanguageServerInstallationStatus::Failed(e.to_string()));
-                                    e.to_string()
-                                })?;
-                            }
-                        }
-                    }
-
-                    self.cache = Some(version_dir.clone());
-                    Ok(zed::Command {
-                        command: version_dir,
-                        args: vec![],
-                        env: vec![],
-                    })
-                }
+        let release = zed::latest_github_release(
+            "DavidLee18/norminette_lsp",
+            GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
             },
+        )
+        .map_err(|e| {
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &LanguageServerInstallationStatus::Failed(e.clone()),
+            );
+            e
+        })?;
+        match &self.version {
+            Some(v) if v == &release.version => match worktree.which("norminette_lsp") {
+                Some(path) => Ok(zed::Command {
+                    command: path,
+                    args: vec![],
+                    env: vec![],
+                }),
+                None => match &self.cache {
+                    Some(path) if fs::metadata(path).map_or(false, |stat| stat.is_file()) => {
+                        Ok(zed::Command {
+                            command: path.clone(),
+                            args: vec![],
+                            env: vec![],
+                        })
+                    }
+                    _ => self.cache_new(release, language_server_id),
+                },
+            },
+            _ => self.cache_new(release, language_server_id),
         }
     }
 
