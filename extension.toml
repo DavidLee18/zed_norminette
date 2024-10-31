@@ -1,6 +1,6 @@
 id = "norminette"
 name = "Norminette"
-version = "0.0.1"
+version = "0.2.1"
 schema_version = 1
 authors = ["David Lee <djwodus@gmail.com>"]
 description = "Norminette for 42 School"
