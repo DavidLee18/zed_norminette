@@ -1,14 +1,14 @@
 [package]
 name = "zed_norminette"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
-lsp-server = "0.7.6"
+zed_extension_api = "0.7.0"
+lsp-server = "0.7.9"
 lsp-types = "0.97.0"
 
 [profile.release]

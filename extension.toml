@@ -1,10 +1,11 @@
 id = "norminette"
 name = "Norminette"
-version = "0.2.1"
+version = "0.2.2"
 schema_version = 1
 authors = ["David Lee <djwodus@gmail.com>"]
 description = "Norminette for 42 School"
 repository = "https://github.com/DavidLee18/zed_norminette"
+tags = ["lsp", "language server", "42", "code style", "lint"]
 
 [language_servers.c-norminette]
 name = "Norminette LSP"
